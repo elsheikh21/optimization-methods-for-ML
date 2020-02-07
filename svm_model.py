@@ -28,45 +28,9 @@ class SVM(object):
         self.execution_time = 0
         self.dual_objective = 0
         self.alpha = 0
-        self.kkt_violation = None
         self.q = self.q_mat(train_x, train_y)
         self.primal_objective = None
-
-        solvers.options['show_progress'] = False
-        solvers.options['abstol'] = 1e-12
-        solvers.options['feastol'] = 1e-12
-
-        Q, p, G, h, A, b = self._prepare_solver(train_x, train_y)
-        tik = time.time()
-        sol = solvers.qp(Q, p, G, h, A, b, initvals=matrix(self.alpha))
-        tok = time.time()
-        self.alpha = np.array(sol['x'])
-
-        # Support Vectors
-        indices = np.where(np.any(self.alpha > 1e-5, axis=1))
-        support_vectors_x = train_x[indices]
-        support_vectors_y = ((train_y[indices]).T).reshape(-1, 1)
-        alpha_star = self.alpha[indices]
-
-        self.num_iterations = sol['iterations']
-        self.dual_objective = sol['dual objective']
-        self.primal_objective = sol['primal objective']
-        self.b = np.mean((1 - support_vectors_y * sum(np.multiply(self.rbf(support_vectors_x, support_vectors_x),
-                                                                  np.multiply(alpha_star, support_vectors_y))))/support_vectors_y)
-        self.execution_time = tok - tik
-        self.kkt_violation = self.compute_kkt_violation(train_x, train_y)
-
-        train_threshold = (
-            np.repeat(self.b, len(train_x), axis=0)).reshape((-1, 1))
-        y_train_pred = np.sign(((np.multiply(self.rbf(support_vectors_x, train_x), np.multiply(
-            alpha_star, support_vectors_y))).sum(axis=0)).reshape((-1, 1)) + train_threshold)
-
-        test_threshold = (
-            np.repeat(self.b, len(test_x), axis=0)).reshape((-1, 1))
-        y_test_pred = np.sign(((np.multiply(self.rbf(support_vectors_x, test_x), np.multiply(
-            alpha_star, support_vectors_y))).sum(axis=0)).reshape((-1, 1)) + test_threshold)
-
-        self.__print_training_info(y_train_pred, train_y, y_test_pred, test_y)
+        self.fit(train_x, train_y, test_x, test_y)
 
     def rbf(self, data_x, data_y):
         return rbf_kernel(data_x, data_y, self._gamma)
@@ -79,6 +43,7 @@ class SVM(object):
         return q
 
     def _prepare_solver(self, train_x, train_y):
+        self.configure_solver()
         Q = self.q_mat(train_x, train_y)
         p = matrix(np.repeat(-1, len(train_x)).reshape(len(train_x), 1), tc='d')
         A = matrix(train_y.copy().reshape(1, -1), tc='d')
@@ -99,13 +64,67 @@ class SVM(object):
     def dual_grad(self):
         return np.dot(self.q, self.alpha) - 1
 
+    def fit(self, train_x, train_y, test_x, test_y):
+        Q, p, G, h, A, b = self._prepare_solver(train_x, train_y)
+        tik = time.time()
+        sol = solvers.qp(Q, p, G, h, A, b, initvals=matrix(self.alpha))
+        tok = time.time()
+        self.alpha = np.array(sol['x'])
+
+        (support_vectors_x, support_vectors_y,
+         alpha_star) = self.compute_support_vectors(train_x, train_y)
+
+        self.num_iterations = sol['iterations']
+        self.dual_objective = sol['dual objective']
+        self.primal_objective = sol['primal objective']
+
+        self.b = self.compute_bstar(
+            support_vectors_x, support_vectors_y, alpha_star)
+
+        self.execution_time = tok - tik
+
+        y_train_pred, y_test_pred = self.compute_predictions(train_x, test_x,
+                                                             alpha_star,
+                                                             support_vectors_x,
+                                                             support_vectors_y)
+
+        self.__print_training_info(y_train_pred, train_y, y_test_pred, test_y)
+
+    def configure_solver(self):
+        solvers.options['show_progress'] = False
+        solvers.options['abstol'] = 1e-12
+        solvers.options['feastol'] = 1e-12
+
+    def compute_support_vectors(self, train_x, train_y):
+        indices = np.where(np.any(self.alpha > 1e-5, axis=1))
+        support_vectors_x = train_x[indices]
+        support_vectors_y = ((train_y[indices]).T).reshape(-1, 1)
+        alpha_star = self.alpha[indices]
+        return support_vectors_x, support_vectors_y, alpha_star
+
+    def compute_predictions(self, train_x, test_x, alpha_star,
+                            support_vectors_x, support_vectors_y):
+        train_threshold = (np.repeat(self.b, len(train_x),
+                                     axis=0)).reshape((-1, 1))
+        y_train_pred = np.sign(((np.multiply(self.rbf(support_vectors_x,
+                                                      train_x), np.multiply(alpha_star,
+                                                                            support_vectors_y))).sum(axis=0)).reshape((-1, 1)) + train_threshold)
+
+        test_threshold = (np.repeat(self.b, len(test_x),
+                                    axis=0)).reshape((-1, 1))
+        y_test_pred = np.sign(((np.multiply(self.rbf(support_vectors_x, test_x), np.multiply(
+            alpha_star, support_vectors_y))).sum(axis=0)).reshape((-1, 1)) + test_threshold)
+        return y_train_pred, y_test_pred
+
+    def compute_bstar(self, support_vectors_x, support_vectors_y, alpha_star):
+        return np.mean((1 - support_vectors_y * sum(np.multiply(self.rbf(support_vectors_x, support_vectors_x), np.multiply(alpha_star, support_vectors_y))))/support_vectors_y)
+
     def compute_acc(self, y_true, y_pred):
         return (accuracy_score(y_true, y_pred) * 100)
 
-    def compute_kkt_violation(self, train_x, train_y, tollerance=1e-7):
-        t_lower, t_upper = tollerance, self._c - tollerance
+    def compute_r_s_vectors(self, train_y, tolerance):
+        t_lower, t_upper = tolerance, self._c - tolerance
         lower_bound_idx = np.where(self.alpha <= t_lower)[0]
-        # FIXME: RETURNS EMPTY ARRAY, line 109
         self.alpha[lower_bound_idx] = 0
         upper_bound_idx = np.where(self.alpha >= t_upper)[0]
         self.alpha[upper_bound_idx] = self._c
@@ -123,7 +142,10 @@ class SVM(object):
 
         r_alpha = list((pos_l.union(neg_u)).union(rest))
         s_alpha = list((neg_l.union(pos_u)).union(rest))
+        return r_alpha, s_alpha
 
+    def compute_kkt_violation(self, train_x, train_y, tolerance=1e-7):
+        r_alpha, s_alpha = self.compute_r_s_vectors(train_y, tolerance)
         grad = -np.multiply(self.dual_grad(), train_y.reshape(-1, 1))
         m, M = max(np.take(grad, r_alpha)), min(np.take(grad, s_alpha))
         return m - M
@@ -134,9 +156,8 @@ class SVM(object):
         print(f"Number of iterations: {self.num_iterations}")
         print(f"Final objective function: {self.primal_objective:4f}")
         print(f"Dual objective function: {self.dual_objective:4f}")
-        print(f"KKT violation: {self.kkt_violation:6f}")
-        print(f'Train accuracy: {self.compute_acc(train_y, y_train_pred):5f} %')
-        print(f'Test accuracy: {self.compute_acc(test_y, y_test_pred):5f} %')
+        print(f'Train acc: {self.compute_acc(train_y, y_train_pred):5f} %')
+        print(f'Test acc: {self.compute_acc(test_y, y_test_pred):5f} %')
 
 
 def load_mnist(path=join(getcwd(), 'Data'), kind='train'):
@@ -181,7 +202,7 @@ def load_mnist(path=join(getcwd(), 'Data'), kind='train'):
     return x_train24, y_train24, x_test24, y_test24
 
 
-def grid_search_kfolds(x, y, save_res=True):
+def grid_search_kfolds(save_res=True):
     c_params = [0.01, 0.1, 1, 2, 2.5, 3, 6, 10, 100]
     gamma_params = [1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1, 10]
 
@@ -196,7 +217,7 @@ def grid_search_kfolds(x, y, save_res=True):
         objs, num_iterations, time_exec = [], [], []
         for train_index, val_index in kf.split(x_train):
             x_train_, x_val = x_train[train_index], x_train[val_index]
-            y_train_, y_val = y[train_index], y[val_index]
+            y_train_, y_val = y_train[train_index], y_train[val_index]
             svm = SVM(c, gamma, x_train_, y_train_, x_test, y_test)
             kf_train_acc.append(svm.compute_acc(x_train_, y_train_))
             kf_val_acc.append(svm.compute_acc(x_val, y_val))
@@ -212,9 +233,12 @@ def grid_search_kfolds(x, y, save_res=True):
 
 
 if __name__ == "__main__":
+    # TODO: TEST GridSearch with KFolds
+    # Question 2.1
+    # Dual QP SVM problem
     x_train, y_train, x_test, y_test = load_mnist()
     svm = SVM(0.1, 1e-5, x_train, y_train, x_test, y_test)
-    print(svm)
+    grid_search_kfolds()
 
-    # TODO: TEST GridSearch with KFolds
-    # TODO: Implement objective function
+    # Question 2.2
+    # SVM Decomposition problem (q = 2)

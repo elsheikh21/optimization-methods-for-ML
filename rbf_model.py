@@ -296,7 +296,7 @@ if __name__ == '__main__':
     x, y = parse_dataset(path)
     logging.info('Dataset is parsed')
 
-    # x_train, x_test, y_train, y_test = grid_search_kfolds(x, y, save_res=True)
+    x_train, x_test, y_train, y_test = grid_search_kfolds(x, y, save_res=True)
 
     # Best results are chosen w.r.t validation error
     # Best Results are Hidden_Size: {} Sigma: {} Rho: {}
@@ -305,7 +305,6 @@ if __name__ == '__main__':
 
     x, y = parse_dataset()
     x_train, x_rest, y_train, y_rest = train_test_split(x, y, train_size=0.7, random_state=SEED)
-
 
     # Question 1.1, Gradient Descent
     rbf = RBF(hidden_size=N, _rho=r, _sigma=s)
