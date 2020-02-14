@@ -71,7 +71,7 @@ class SVM(object):
             grad_r = self.alpha_gradient[r_alpha].flatten()
             grad_s = self.alpha_gradient[s_alpha].flatten()
             feasibility_condition, feasible = False, None
-            for i in range(1, 10000):
+            for i in range(1, 160):
                 a = i * q
                 sorted_s = np.argsort(grad_s)[a: a + (q // 2)]
                 sorted_r = np.argsort(-grad_r)[a: a + (q // 2)]
@@ -80,7 +80,7 @@ class SVM(object):
                 dir[qr] = 1 / data_y[qr, ].reshape((-1, 1))
                 dir[qs] = -1 / data_y[qs, ].reshape((-1, 1))
                 feasible = self.alpha_gradient.T.dot(dir)
-                if feasible[0][0] < 0:
+                if feasible[0][0] <= 0:
                     feasibility_condition = True
                     break
             if feasibility_condition:
@@ -313,5 +313,5 @@ if __name__ == "__main__":
     # Question 2.2
     # SVM Decomposition problem (q = 2)
     x_train, y_train, x_test, y_test = load_mnist()
+    # TODO: REPLACE WITH BEST HYPERPARAMs
     svm = SVM(0.1, 1e-5, x_train, y_train, x_test, y_test)
-    print(svm)
