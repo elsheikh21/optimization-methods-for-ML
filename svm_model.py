@@ -20,7 +20,7 @@ np.random.seed(SEED)
 
 
 class SVM(object):
-    def __init__(self, c, gamma, train_x, train_y, test_x, test_y):
+    def __init__(self, c, gamma, train_x, train_y, test_x, test_y, _log):
         self._c = c
         self._gamma = gamma
         self.b = 0
@@ -30,7 +30,7 @@ class SVM(object):
         self.alpha = 0
         self.q = self.q_mat(train_x, train_y)
         self.primal_objective = None
-        self.fit(train_x, train_y, test_x, test_y)
+        self.fit(train_x, train_y, test_x, test_y, log=_log)
 
     def rbf(self, data_x, data_y):
         return rbf_kernel(data_x, data_y, self._gamma)
@@ -57,14 +57,14 @@ class SVM(object):
 
         G = matrix(np.concatenate(
             (first_constraint, second_constraint)), tc='d')
-        h = matrix(np.concatenate((first_limit, second_limit)))
+        h = matrix(np.concatenate((first_limit, second_limit)), tc='d')
 
         return Q, p, G, h, A, b
 
     def dual_grad(self):
         return np.dot(self.q, self.alpha) - 1
 
-    def fit(self, train_x, train_y, test_x, test_y):
+    def fit(self, train_x, train_y, test_x, test_y, log):
         Q, p, G, h, A, b = self._prepare_solver(train_x, train_y)
         tik = time.time()
         sol = solvers.qp(Q, p, G, h, A, b, initvals=matrix(self.alpha))
@@ -88,7 +88,12 @@ class SVM(object):
                                                              support_vectors_x,
                                                              support_vectors_y)
 
-        self.__print_training_info(y_train_pred, train_y, y_test_pred, test_y)
+        self.train_acc = self.compute_acc(train_y, y_train_pred)
+        self.test_acc = self.compute_acc(train_y, y_train_pred)
+
+        if log:
+            self.__print_training_info(y_train_pred, train_y,
+                                       y_test_pred, test_y)
 
     def configure_solver(self):
         solvers.options['show_progress'] = False
@@ -156,8 +161,8 @@ class SVM(object):
         print(f"Number of iterations: {self.num_iterations}")
         print(f"Final objective function: {self.primal_objective:4f}")
         print(f"Dual objective function: {self.dual_objective:4f}")
-        print(f'Train acc: {self.compute_acc(train_y, y_train_pred):5f} %')
-        print(f'Test acc: {self.compute_acc(test_y, y_test_pred):5f} %')
+        print(f'Train acc: {self.train_acc:5f} %')
+        print(f'Test acc: {self.test_acc:5f} %')
 
 
 def load_mnist(path=join(getcwd(), 'Data'), kind='train'):
@@ -204,7 +209,7 @@ def load_mnist(path=join(getcwd(), 'Data'), kind='train'):
 
 def grid_search_kfolds(save_res=True):
     c_params = [0.01, 0.1, 1, 2, 2.5, 3, 6, 10, 100]
-    gamma_params = [1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1, 10]
+    gamma_params = [1e-5, 1e-4, 1e-3, 1e-2, 1e-1, 1, 1e1]
 
     x_train, y_train, x_test, y_test = load_mnist()
 
@@ -218,26 +223,26 @@ def grid_search_kfolds(save_res=True):
         for train_index, val_index in kf.split(x_train):
             x_train_, x_val = x_train[train_index], x_train[val_index]
             y_train_, y_val = y_train[train_index], y_train[val_index]
-            svm = SVM(c, gamma, x_train_, y_train_, x_test, y_test)
-            kf_train_acc.append(svm.compute_acc(x_train_, y_train_))
-            kf_val_acc.append(svm.compute_acc(x_val, y_val))
+            svm = SVM(c, gamma, x_train_, y_train_, x_val, y_val, _log=False)
+            kf_train_acc.append(svm.train_acc)
+            kf_val_acc.append(svm.test_acc)
             time_exec.append(svm.execution_time)
             num_iterations.append(svm.num_iterations)
             objs.append(svm.dual_objective)
-    results_dict.update({params: [np.mean(kf_train_acc), np.mean(kf_val_acc),
-                                  np.mean(time_exec), np.mean(num_iterations),
-                                  np.mean(objs)]})
+        results_dict.update({f'{params}': [kf_train_acc[-1], kf_val_acc[-1],
+                                           time_exec[-1], num_iterations[-1],
+                                           objs[-1]]})
     if save_res:
-        with open('SVM_GridSearch_KFolds.json', encoding='utf-8', mode='w+') as f:
-            f.write(json.dump(results_dict))
+        with open('SVM_grid_search_kfolds.json', mode='w+') as f:
+            json.dump(results_dict, f)
 
 
 if __name__ == "__main__":
-    # TODO: TEST GridSearch with KFolds
+    # TODO: RUN GridSearch with KFolds
     # Question 2.1
     # Dual QP SVM problem
     x_train, y_train, x_test, y_test = load_mnist()
-    svm = SVM(0.1, 1e-5, x_train, y_train, x_test, y_test)
+    svm = SVM(0.1, 1e-5, x_train, y_train, x_test, y_test, _log=False)
     grid_search_kfolds()
 
     # Question 2.2
